@@ -1,0 +1,5 @@
+"""
+IMS Core - Test Suite
+"""
+
+__version__ = "0.1.0"

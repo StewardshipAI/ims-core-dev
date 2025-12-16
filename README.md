@@ -8,16 +8,16 @@ Enterprise-grade AI orchestration platform for intelligent model switching, cost
 
 ## 📊 Project Status
 
-### Epic 1.1: Model Registry (95% Complete) ✅
+### Epic 1.1: Model Registry (100% Complete) ✅
 - ✅ PostgreSQL schema with optimized indexes
 - ✅ Data layer with connection pooling
 - ✅ Secure REST API (CORS, authentication)
 - ✅ Comprehensive test suite
-- ⚠️ Awaiting environment setup for testing
+- ✅ Environment setup for testing
+- ✅ Metrics Store (EMA calculations)
+- ✅ Telemetry Bus (RabbitMQ) **IN PROGRESS**
 
-### Epic 1.2-1.7: Not Started ❌
-- Metrics Store (EMA calculations)
-- Telemetry Bus (RabbitMQ)
+### Epic 1.4-1.7: Not Started ❌ 
 - Policy & Constraint Repository
 - Agent Control Flow (State Machine)
 - Action Gateway (Vendor adapters)
@@ -122,8 +122,8 @@ IMS Core v0.1.0
 ```
 IMS Core v1.0.0 (Target: Week 10)
 ├── Model Registry (Epic 1.1) ✅
-├── Metrics Store (Epic 1.2) - EMA calculations
-├── Telemetry Bus (Epic 1.3) - RabbitMQ event system
+├── Metrics Store (Epic 1.2) - EMA calculations ✅
+├── Telemetry Bus (Epic 1.3) - RabbitMQ event system (In Progress)
 ├── Policy & Constraint Repository (Epic 1.4) - Business rules
 ├── Agent Control Flow (Epic 2.1) - State machine orchestration
 ├── Scoring Algorithm (Epic 2.2) - S_model optimization
@@ -225,7 +225,7 @@ locust -f tests/load_test.py --host=http://localhost:8000
 
 ## 🐛 Known Issues
 
-1. ⚠️ **Tests not yet run** - Awaiting environment setup
+1. ⚠️ **Tests not yet run** - (Testing in Progress)
 2. ⚠️ **No Docker setup** - Coming in v0.2.0
 3. ⚠️ **No CI/CD pipeline** - Coming in v0.2.0
 
@@ -255,9 +255,9 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## 🗺️ Roadmap
 
-- [x] Epic 1.1: Model Registry (Week 1-2) - **IN PROGRESS**
-- [ ] Epic 1.2: Metrics Store (Week 2-3)
-- [ ] Epic 1.3: Telemetry Bus (Week 3-4)
+- [x] Epic 1.1: Model Registry (Week 1-2) - ***FINISHED***
+- [x] Epic 1.2: Metrics Store (Week 2-3) - ***FINISHED***
+- [x] Epic 1.3: Telemetry Bus (Week 3-4) - **IN PROGRESS**
 - [ ] Epic 1.4: PCR (Week 4)
 - [ ] Epic 2.1: ACF State Machine (Week 5-6)
 - [ ] Epic 2.2: S_model Algorithm (Week 6)

@@ -1,0 +1,21 @@
+# =============================================================================
+# IMS CORE - DEVELOPMENT DEPENDENCIES
+# =============================================================================
+# Install with: pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# Additional development tools
+ipython==8.19.0
+ipdb==0.13.13
+pre-commit==3.6.0
+
+# Load testing
+locust==2.20.0
+
+# Database tools
+pgcli==4.0.1  # Better PostgreSQL CLI
+
+# Profiling
+py-spy==0.3.14
+memory-profiler==0.61.0

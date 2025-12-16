@@ -1,0 +1,77 @@
+version: '3.9'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: ims-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ims_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schemas:/docker-entrypoint-initdb.d  # Auto-run SQL migrations on startup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ims-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ims-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ims-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ims-api
+    environment:
+      # Database
+      DB_CONNECTION_STRING: postgresql://postgres:postgres@postgres:5432/ims_db
+      TEST_DB_CONNECTION_STRING: postgresql://postgres:postgres@postgres:5432/ims_test_db
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # Security
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      # Logging
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app  # Live code reload for development
+    command: uvicorn src.api.model_registry_api:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - ims-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  ims-network:
+    driver: bridge

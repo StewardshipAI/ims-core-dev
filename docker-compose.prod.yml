@@ -1,0 +1,141 @@
+version: '3.9'
+
+# ⚠️ PRODUCTION CONFIG - Use environment variables for secrets!
+# Run with: docker-compose -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: ims-postgres-prod
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}  # ✅ Must be set!
+      POSTGRES_DB: ${DB_NAME:-ims_db}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schemas:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - ims-network
+    # 🔒 Security: No logs of sensitive data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: ims-redis-prod
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - ims-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_DATE: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        VCS_REF: ${GIT_SHA:-latest}
+    image: ims-core:prod
+    container_name: ims-api-prod
+    environment:
+      # Database
+      DB_CONNECTION_STRING: ${DB_CONNECTION_STRING}
+      TEST_DB_CONNECTION_STRING: ${TEST_DB_CONNECTION_STRING}
+      # Redis
+      REDIS_URL: ${REDIS_URL}
+      # Security
+      ADMIN_API_KEY: ${ADMIN_API_KEY}  # ✅ Must be 32+ chars!
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      # Performance
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      APP_ENV: production
+      DEBUG: "false"
+      # Workers (Gunicorn)
+      WORKERS: ${WORKERS:-4}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - ims-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+    # 🔒 Security settings
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    # Note: Command uses gunicorn for production (not uvicorn --reload)
+    command: >
+      gunicorn 
+      -w ${WORKERS:-4}
+      -k uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000
+      --timeout 120
+      --access-logfile -
+      --error-logfile -
+      src.api.model_registry_api:app
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  ims-network:
+    driver: bridge
+
+# ⚠️ DEPLOYMENT CHECKLIST
+# Before deploying:
+# 1. Set all environment variables (DB_PASSWORD, ADMIN_API_KEY, etc.)
+# 2. Use strong, 32+ character ADMIN_API_KEY
+# 3. Use strong DB_PASSWORD
+# 4. Set ALLOWED_ORIGINS to your domain only
+# 5. Enable SSL/TLS (reverse proxy like nginx)
+# 6. Set LOG_LEVEL to "WARNING" or "ERROR"
+# 7. Use separate .env.prod file
+# 8. Test with: docker-compose -f docker-compose.prod.yml up
+# 9. Monitor logs: docker-compose -f docker-compose.prod.yml logs -f

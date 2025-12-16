@@ -1,11 +1,12 @@
 # FastAPI Model Registry API - PRODUCTION READY (All Critical Fixes Applied)
+# ✅ FIX #10: Fixed route ordering (/filter BEFORE /{model_id})
 
 import os
 import logging
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends, Request, status
+from fastapi import FastAPI, HTTPException, Depends, Request, status, Query
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ConfigDict
@@ -62,7 +63,7 @@ ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS_STR.split(",")]
 logger.info(f"Allowed CORS origins: {ALLOWED_ORIGINS}")
 
 # Initialize Registry with connection pooling
-registry = ModelRegistry(DB_CONNECTION_STRING=DB_CONN)
+registry = ModelRegistry(db_connection_string=DB_CONN)
 
 # Rate Limiter Setup
 limiter = Limiter(key_func=get_remote_address)
@@ -149,13 +150,13 @@ async def verify_admin(key: str = Depends(api_key_header)):
 # --- Pydantic Models (DTOs) ---
 
 class ModelBase(BaseModel):
-    capability_tier: CapabilityTier
+    capability_tier: CapabilityTier = Field(..., description="Capability tier (Tier_1, Tier_2, Tier_3)")
     context_window: int = Field(..., gt=0, le=10_000_000, description="Max tokens (1-10M)")
     cost_in_per_mil: float = Field(..., ge=0, le=1000, description="Cost per 1M input tokens ($0-1000)")
     cost_out_per_mil: float = Field(..., ge=0, le=1000, description="Cost per 1M output tokens ($0-1000)")
     function_call_support: bool = False
     
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=False, protected_namespaces=())
 
 class ModelCreateRequest(ModelBase):
     model_id: str = Field(..., min_length=1, max_length=100, description="Unique Model ID")
@@ -164,14 +165,14 @@ class ModelCreateRequest(ModelBase):
 
 class ModelUpdateRequest(BaseModel):
     # All fields optional for PATCH
-    capability_tier: Optional[CapabilityTier] = None
+    capability_tier: Optional[CapabilityTier] = Field(None, description="Capability tier (Tier_1, Tier_2, Tier_3)")
     context_window: Optional[int] = Field(None, gt=0, le=10_000_000)
     cost_in_per_mil: Optional[float] = Field(None, ge=0, le=1000)
     cost_out_per_mil: Optional[float] = Field(None, ge=0, le=1000)
     function_call_support: Optional[bool] = None
     is_active: Optional[bool] = None
     
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=False, protected_namespaces=())
 
 class ModelResponse(ModelBase):
     model_id: str
@@ -250,37 +251,7 @@ async def register_model(
         logger.error(f"Unexpected error in registration: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get(
-    "/api/v1/models/{model_id}", 
-    response_model=ModelResponse,
-    tags=["Public"],
-    summary="Get model by ID"
-)
-@limiter.limit("100/minute")
-async def get_model(request: Request, model_id: str):
-    """
-    Retrieve details for a specific model by ID.
-    
-    - Uses Redis caching if available (5 min TTL)
-    - Rate limited: 100 requests/minute
-    """
-    try:
-        model = registry.get_model(model_id)
-        if not model:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Model '{model_id}' not found"
-            )
-        return model
-    except ModelRegistryError as e:
-        logger.error(f"Registry error fetching model: {e}")
-        raise HTTPException(status_code=500, detail="Internal registry error")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error fetching model: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
-
+# ✅ FIX #10: FILTER ENDPOINT MUST COME BEFORE PARAMETERIZED /{model_id}
 @app.get(
     "/api/v1/models/filter", 
     response_model=List[ModelResponse],
@@ -290,12 +261,12 @@ async def get_model(request: Request, model_id: str):
 @limiter.limit("50/minute")
 async def filter_models(
     request: Request,
-    capability_tier: Optional[CapabilityTier] = None,
-    vendor_id: Optional[str] = None,
-    function_call_support: Optional[bool] = None,
-    min_context: Optional[int] = Field(None, gt=0),
-    max_cost_in: Optional[float] = Field(None, ge=0),
-    include_inactive: bool = False
+    capability_tier: Optional[CapabilityTier] = Query(None),
+    vendor_id: Optional[str] = Query(None),
+    function_call_support: Optional[bool] = Query(None),
+    min_context: Optional[int] = Query(None, gt=0),
+    max_cost_in: Optional[float] = Query(None, ge=0),
+    include_inactive: bool = Query(False)
 ):
     """
     Search for models matching specific criteria.
@@ -329,6 +300,38 @@ async def filter_models(
         raise HTTPException(status_code=500, detail="Internal registry error")
     except Exception as e:
         logger.error(f"Unexpected error filtering models: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+# ✅ GET BY ID COMES AFTER FILTER
+@app.get(
+    "/api/v1/models/{model_id}", 
+    response_model=ModelResponse,
+    tags=["Public"],
+    summary="Get model by ID"
+)
+@limiter.limit("100/minute")
+async def get_model(request: Request, model_id: str):
+    """
+    Retrieve details for a specific model by ID.
+    
+    - Uses Redis caching if available (5 min TTL)
+    - Rate limited: 100 requests/minute
+    """
+    try:
+        model = registry.get_model(model_id)
+        if not model:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Model '{model_id}' not found"
+            )
+        return model
+    except ModelRegistryError as e:
+        logger.error(f"Registry error fetching model: {e}")
+        raise HTTPException(status_code=500, detail="Internal registry error")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error fetching model: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.patch(

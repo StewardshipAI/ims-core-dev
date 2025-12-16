@@ -247,6 +247,7 @@ class ModelRegistry:
         Query models with filters.
         
         ✅ FIX #9: Query result caching for performance
+        ✅ FIX #11: Convert enums to values before JSON serialization
         
         Args:
             capability_tier (CapabilityTier): Filter by exact tier.
@@ -256,8 +257,17 @@ class ModelRegistry:
             function_call_support (bool): Filter by tool support.
             include_inactive (bool): If True, returns active and inactive models.
         """
+        # ✅ FIX #11: Normalize filters for JSON serialization
+        # Convert CapabilityTier enum to its value string
+        serializable_filters = {}
+        for k, v in filters.items():
+            if isinstance(v, CapabilityTier):
+                serializable_filters[k] = v.value
+            else:
+                serializable_filters[k] = v
+        
         # ✅ FIX #9: Check cache for filter results
-        cache_key = f"filter:{json.dumps(filters, sort_keys=True)}"
+        cache_key = f"filter:{json.dumps(serializable_filters, sort_keys=True)}"
         
         if self.redis:
             try:

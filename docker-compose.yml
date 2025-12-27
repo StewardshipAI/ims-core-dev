@@ -38,6 +38,24 @@ services:
     networks:
       - ims-network
 
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: ims-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ims-network
+
   # FastAPI Application
   api:
     build:
@@ -50,6 +68,8 @@ services:
       TEST_DB_CONNECTION_STRING: postgresql://postgres:postgres@postgres:5432/ims_test_db
       # Redis
       REDIS_URL: redis://redis:6379/0
+      # RabbitMQ
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       # Security
       ADMIN_API_KEY: ${ADMIN_API_KEY}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
@@ -61,6 +81,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     volumes:
       - .:/app  # Live code reload for development

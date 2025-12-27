@@ -14,6 +14,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
+import redis.asyncio as redis
 
 # Import our data layer
 from src.data.model_registry import (
@@ -24,6 +25,9 @@ from src.data.model_registry import (
     ValidationError,
     ModelRegistryError
 )
+# RabbitMQ Integration
+from src.core.events import rabbitmq, get_event_publisher, EventPublisher
+from src.schemas.events import CloudEvent
 
 # Load environment variables
 load_dotenv()
@@ -62,6 +66,9 @@ ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS_STR.split(",")]
 
 logger.info(f"Allowed CORS origins: {ALLOWED_ORIGINS}")
 
+# Import PCR Router
+from src.api.pcr_router import router as pcr_router
+
 # Initialize Registry with connection pooling
 registry = ModelRegistry(db_connection_string=DB_CONN)
 
@@ -73,6 +80,10 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     # Startup
     logger.info("IMS Model Registry API starting up...")
+    
+    # Initialize RabbitMQ
+    await rabbitmq.connect()
+    
     logger.info(f"Database connection pool initialized")
     
     # Check health on startup
@@ -87,6 +98,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down...")
+    await rabbitmq.close()
     registry.close_pool()
     logger.info("Connection pool closed")
 
@@ -197,10 +209,15 @@ async def health_check():
     """
     ✅ NEW: Health check for monitoring/orchestration
     
-    Returns system health status including database and cache.
+    Returns system health status including database, cache, and RabbitMQ.
     """
     try:
         health = registry.health_check()
+        
+        # Check RabbitMQ
+        rmq_status = "connected" if rabbitmq.connection and not rabbitmq.connection.is_closed else "disconnected"
+        health["rabbitmq"] = rmq_status
+        
         return health
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -208,6 +225,36 @@ async def health_check():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Health check failed"
         )
+
+@app.get(
+    "/metrics",
+    tags=["System"],
+    summary="Get system metrics"
+)
+@limiter.limit("60/minute")
+async def get_metrics(
+    _: str = Depends(verify_admin)
+):
+    """
+    Retrieve system metrics collected via Telemetry Bus.
+    
+    **Requires Admin API Key**
+    """
+    try:
+        r = redis.from_url(REDIS_URL, decode_responses=True)
+        keys = await r.keys("metrics:*")
+        metrics = {}
+        if keys:
+            values = await r.mget(keys)
+            for k, v in zip(keys, values):
+                clean_key = k.replace("metrics:", "")
+                metrics[clean_key] = int(v) if v.isdigit() else v
+        await r.close()
+        return metrics
+    except Exception as e:
+        logger.error(f"Error fetching metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch metrics")
+
 
 @app.post(
     "/api/v1/models/register", 
@@ -220,7 +267,8 @@ async def health_check():
 async def register_model(
     request: Request, 
     model: ModelCreateRequest, 
-    _: str = Depends(verify_admin)
+    _: str = Depends(verify_admin),
+    publisher: EventPublisher = Depends(get_event_publisher)
 ):
     """
     Register a new AI model in the database.
@@ -234,6 +282,15 @@ async def register_model(
         # Convert Pydantic model to Domain entity
         profile = ModelProfile(**model.model_dump())
         registered_id = registry.register_model(profile)
+        
+        # Publish Event
+        from uuid import uuid4
+        await publisher.publish(CloudEvent(
+            source="/api/v1/models/register",
+            type="model.registered",
+            correlation_id=request.headers.get("X-Request-ID", str(uuid4())),
+            data={"model_id": registered_id, "vendor_id": model.vendor_id}
+        ))
         
         logger.info(f"Model registered: {registered_id} by admin")
         return {"model_id": registered_id, "status": "registered"}
@@ -266,7 +323,8 @@ async def filter_models(
     function_call_support: Optional[bool] = Query(None),
     min_context: Optional[int] = Query(None, gt=0),
     max_cost_in: Optional[float] = Query(None, ge=0),
-    include_inactive: bool = Query(False)
+    include_inactive: bool = Query(False),
+    publisher: EventPublisher = Depends(get_event_publisher)
 ):
     """
     Search for models matching specific criteria.
@@ -293,6 +351,16 @@ async def filter_models(
 
     try:
         results = registry.filter_models(**filters)
+        
+        # Publish Event
+        from uuid import uuid4
+        await publisher.publish(CloudEvent(
+            source="/api/v1/models/filter",
+            type="filter.executed",
+            correlation_id=request.headers.get("X-Request-ID", str(uuid4())),
+            data={"filters": filters, "result_count": len(results)}
+        ))
+        
         logger.debug(f"Filter query returned {len(results)} results")
         return results
     except ModelRegistryError as e:
@@ -310,7 +378,11 @@ async def filter_models(
     summary="Get model by ID"
 )
 @limiter.limit("100/minute")
-async def get_model(request: Request, model_id: str):
+async def get_model(
+    request: Request, 
+    model_id: str,
+    publisher: EventPublisher = Depends(get_event_publisher)
+):
     """
     Retrieve details for a specific model by ID.
     
@@ -324,6 +396,17 @@ async def get_model(request: Request, model_id: str):
                 status_code=404, 
                 detail=f"Model '{model_id}' not found"
             )
+        
+        # Publish Event (Fire & Forget mostly, but here awaited)
+        # Note: In high throughput, we might want to background this
+        from uuid import uuid4
+        await publisher.publish(CloudEvent(
+            source=f"/api/v1/models/{model_id}",
+            type="model.queried",
+            correlation_id=request.headers.get("X-Request-ID", str(uuid4())),
+            data={"model_id": model_id, "cached": False} # Registry doesn't expose cache hit status yet
+        ))
+
         return model
     except ModelRegistryError as e:
         logger.error(f"Registry error fetching model: {e}")
@@ -344,7 +427,8 @@ async def update_model(
     request: Request, 
     model_id: str, 
     updates: ModelUpdateRequest, 
-    _: str = Depends(verify_admin)
+    _: str = Depends(verify_admin),
+    publisher: EventPublisher = Depends(get_event_publisher)
 ):
     """
     Update mutable fields of a model (costs, tier, capabilities).
@@ -371,6 +455,15 @@ async def update_model(
                 status_code=404, 
                 detail=f"Model '{model_id}' not found"
             )
+        
+        # Publish Event
+        from uuid import uuid4
+        await publisher.publish(CloudEvent(
+            source=f"/api/v1/models/{model_id}",
+            type="model.updated",
+            correlation_id=request.headers.get("X-Request-ID", str(uuid4())),
+            data={"model_id": model_id, "updates": list(update_data.keys())}
+        ))
         
         logger.info(f"Model updated: {model_id} by admin")
         return {
@@ -400,7 +493,8 @@ async def update_model(
 async def deactivate_model(
     request: Request, 
     model_id: str, 
-    _: str = Depends(verify_admin)
+    _: str = Depends(verify_admin),
+    publisher: EventPublisher = Depends(get_event_publisher)
 ):
     """
     Soft-delete (deactivate) a model.
@@ -418,6 +512,15 @@ async def deactivate_model(
                 status_code=404, 
                 detail=f"Model '{model_id}' not found"
             )
+        
+        # Publish Event
+        from uuid import uuid4
+        await publisher.publish(CloudEvent(
+            source=f"/api/v1/models/{model_id}",
+            type="model.deactivated",
+            correlation_id=request.headers.get("X-Request-ID", str(uuid4())),
+            data={"model_id": model_id}
+        ))
         
         logger.info(f"Model deactivated: {model_id} by admin")
         return None  # 204 response has no body
@@ -482,6 +585,8 @@ async def register_models_batch(
     except Exception as e:
         logger.error(f"Unexpected error in batch registration: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+app.include_router(pcr_router)
 
 if __name__ == "__main__":
     import uvicorn

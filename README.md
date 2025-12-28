@@ -19,7 +19,7 @@ Enterprise-grade AI orchestration platform for intelligent model switching, cost
 - ✅ Policy & Constraint Repository
 -    Agent Control Flow (State Machine) **IN PROGRESS**
      
-### Epic 3-7: Not Started ❌ 
+### Epic 3-4: Not Started ❌ 
 - Action Gateway (Vendor adapters)
 - Production deployment
 

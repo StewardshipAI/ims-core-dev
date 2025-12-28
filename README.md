@@ -1,4 +1,4 @@
-# 🧠 IMS Core - Intelligent Model Switching
+# 🧠 IMS Core Dev. - Intelligent Model Switching
 
 **Status**: 🚧 Development Version (v0.1.0)
 
@@ -15,11 +15,11 @@ Enterprise-grade AI orchestration platform for intelligent model switching, cost
 - ✅ Comprehensive test suite
 - ✅ Environment setup for testing
 - ✅ Metrics Store (EMA calculations)
-- ✅ Telemetry Bus (RabbitMQ) **IN PROGRESS**
-
-### Epic 1.4-1.7: Not Started ❌ 
-- Policy & Constraint Repository
-- Agent Control Flow (State Machine)
+- ✅ Telemetry Bus (RabbitMQ) 
+- ✅ Policy & Constraint Repository
+-    Agent Control Flow (State Machine) **IN PROGRESS**
+     
+### Epic 3-7: Not Started ❌ 
 - Action Gateway (Vendor adapters)
 - Production deployment
 
@@ -38,8 +38,8 @@ Enterprise-grade AI orchestration platform for intelligent model switching, cost
 
 ```bash
 # Clone repository
-git clone https://github.com/StewardshipSolutions/ims-core.git
-cd ims-core
+git clone https://github.com/StewardshipAI/ims-core-dev.git
+cd ims-core-dev
 
 # Create virtual environment
 python -m venv venv
@@ -110,11 +110,11 @@ pytest tests/ -v -m "not slow"
 
 ```
 IMS Core v0.1.0
-└── Epic 1.1: Model Registry
-    ├── PostgreSQL Database (models table)
-    ├── Data Layer (ModelRegistry class)
-    ├── REST API (FastAPI)
-    └── Redis Cache (optional)
+└── Epic 1.1: Model Registry ✅
+    ├── PostgreSQL Database (models table) ✅
+    ├── Data Layer (ModelRegistry class) ✅
+    ├── REST API (FastAPI) ✅
+    └── Redis Cache (optional) ✅
 ```
 
 ### Components (Planned)
@@ -123,9 +123,9 @@ IMS Core v0.1.0
 IMS Core v1.0.0 (Target: Week 10)
 ├── Model Registry (Epic 1.1) ✅
 ├── Metrics Store (Epic 1.2) - EMA calculations ✅
-├── Telemetry Bus (Epic 1.3) - RabbitMQ event system (In Progress)
-├── Policy & Constraint Repository (Epic 1.4) - Business rules
-├── Agent Control Flow (Epic 2.1) - State machine orchestration
+├── Telemetry Bus (Epic 1.3) - RabbitMQ event system  ✅
+├── Policy & Constraint Repository (Epic 1.4) - Business rules ✅
+├── Agent Control Flow (Epic 2.1) - State machine orchestration (In Progress)
 ├── Scoring Algorithm (Epic 2.2) - S_model optimization
 ├── Policy Verifier Engine (Epic 2.3) - Constraint checking
 ├── Behavioral Constraint Processor (Epic 2.4) - Guardrails
@@ -257,9 +257,9 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 - [x] Epic 1.1: Model Registry (Week 1-2) - ***FINISHED***
 - [x] Epic 1.2: Metrics Store (Week 2-3) - ***FINISHED***
-- [x] Epic 1.3: Telemetry Bus (Week 3-4) - **IN PROGRESS**
-- [ ] Epic 1.4: PCR (Week 4)
-- [ ] Epic 2.1: ACF State Machine (Week 5-6)
+- [x] Epic 1.3: Telemetry Bus (Week 3-4) - ***FINISHED***
+- [X] Epic 1.4: PCR (Week 4) - ***FINISHED***
+- [ ] Epic 2.1: ACF State Machine (Week 5-6) - **IN PROGRESS**
 - [ ] Epic 2.2: S_model Algorithm (Week 6)
 - [ ] Epic 3: Action Gateway (Week 7)
 - [ ] Epic 4-7: Governance, Observability, Testing, Deployment (Week 8-10)

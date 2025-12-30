@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 from src.core.pcr import RecommendationService, RecommendationRequest
 from src.core.events import EventPublisher, get_event_publisher, CloudEvent
 from src.data.model_registry import ModelProfile, ModelRegistry
-from src.api.model_registry_api import verify_admin, registry # Re-use registry singleton
+from src.api.registry_singleton import registry # Re-use registry singleton
+
+from src.api.auth_utils import verify_admin      # New location
 
 router = APIRouter(prefix="/api/v1/recommend", tags=["PCR"])
 

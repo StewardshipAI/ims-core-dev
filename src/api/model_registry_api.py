@@ -18,13 +18,14 @@ import redis.asyncio as redis
 
 # Import our data layer
 from src.data.model_registry import (
-    ModelRegistry, 
     ModelProfile, 
     CapabilityTier, 
     DuplicateModelError, 
     ValidationError,
     ModelRegistryError
 )
+from src.api.registry_singleton import registry # Import the singleton
+
 # RabbitMQ Integration
 from src.core.events import rabbitmq, get_event_publisher, EventPublisher
 from src.schemas.events import CloudEvent
@@ -68,9 +69,7 @@ logger.info(f"Allowed CORS origins: {ALLOWED_ORIGINS}")
 
 # Import PCR Router
 from src.api.pcr_router import router as pcr_router
-
-# Initialize Registry with connection pooling
-registry = ModelRegistry(db_connection_string=DB_CONN)
+from src.api.auth_utils import verify_admin
 
 # Rate Limiter Setup
 limiter = Limiter(key_func=get_remote_address)
@@ -233,6 +232,7 @@ async def health_check():
 )
 @limiter.limit("60/minute")
 async def get_metrics(
+    request: Request,
     _: str = Depends(verify_admin)
 ):
     """

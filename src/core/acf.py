@@ -121,3 +121,36 @@ class AgentControlFlow:
         self.transitions: Dict[RequestState, Dict[TransitionEvent, RequestState]] = {
             RequestState.RECEIVED: {
                 TransitionEvent.VALIDATE: RequestState.VALIDATING,
+                TransitionEvent.ABORT: RequestState.FAILED,
+            },
+            RequestState.VALIDATING: {
+                TransitionEvent.POLICY_PASS: RequestState.POLICY_CHECK,
+                TransitionEvent.ABORT: RequestState.FAILED,
+            },
+            RequestState.POLICY_CHECK: {
+                TransitionEvent.POLICY_PASS: RequestState.MODEL_SELECTION,
+                TransitionEvent.POLICY_FAIL: RequestState.POLICY_REJECTED,
+                TransitionEvent.ABORT: RequestState.FAILED,
+            },
+            RequestState.MODEL_SELECTION: {
+                TransitionEvent.MODEL_SELECTED: RequestState.EXECUTING,
+                TransitionEvent.ABORT: RequestState.FAILED,
+            },
+            RequestState.EXECUTING: {
+                TransitionEvent.EXECUTION_SUCCESS: RequestState.VERIFYING,
+                TransitionEvent.EXECUTION_FAIL: RequestState.FAILED, # Or a retry state
+                TransitionEvent.ABORT: RequestState.FAILED,
+            },
+            RequestState.VERIFYING: {
+                TransitionEvent.VERIFICATION_PASS: RequestState.COMPLETED,
+                TransitionEvent.VERIFICATION_FAIL: RequestState.FAILED, # Or a retry state
+                TransitionEvent.ABORT: RequestState.FAILED,
+            },
+            RequestState.POLICY_REJECTED: {
+                TransitionEvent.RETRY: RequestState.RECEIVED, # Or other appropriate state
+            },
+            RequestState.FAILED: {
+                TransitionEvent.RETRY: RequestState.RECEIVED,
+            },
+            RequestState.COMPLETED: {} # Terminal state
+        }

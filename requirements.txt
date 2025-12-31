@@ -55,3 +55,7 @@ python-json-logger==2.0.7
 rich==13.7.0
 typer==0.9.0
 psycopg2-binary
+# Action Gateway Dependencies
+google-generativeai
+openai
+anthropic

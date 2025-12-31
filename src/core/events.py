@@ -115,7 +115,7 @@ class EventPublisher:
             return "metrics.events"
 
 
-async def get_event_publisher() -> EventPublisher:
+async def get_event_publisher():
     """FastAPI Dependency"""
     channel = rabbitmq.get_channel()
     if not channel:

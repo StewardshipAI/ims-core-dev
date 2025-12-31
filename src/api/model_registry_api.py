@@ -588,6 +588,9 @@ async def register_models_batch(
 
 app.include_router(pcr_router)
 
+from src.api.gateway_router import router as gateway_router
+app.include_router(gateway_router)
+
 if __name__ == "__main__":
     import uvicorn
     

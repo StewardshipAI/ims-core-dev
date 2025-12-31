@@ -73,6 +73,9 @@ services:
       # Security
       ADMIN_API_KEY: ${ADMIN_API_KEY}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       # Logging
       LOG_LEVEL: INFO
     ports:

@@ -10,7 +10,8 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 from uuid import uuid4
 
-from src.core.events import EventPublisher, CloudEvent
+from src.core.events import EventPublisher, CloudEvent, get_event_publisher
+from fastapi import Depends
 
 logger = logging.getLogger("ims.usage_tracker")
 
@@ -114,8 +115,8 @@ class UsageTracker:
             correlation_id: Optional correlation ID for tracing
         """
         # Calculate costs
-        cost_in = (tokens_in / 1_000_000) * cost_per_mil_in
-        cost_out = (tokens_out / 1_000_000) * cost_per_mil_out
+        cost_in = (float(tokens_in) / 1_000_000) * float(cost_per_mil_in)
+        cost_out = (float(tokens_out) / 1_000_000) * float(cost_per_mil_out)
         
         # Create metrics object
         metrics = UsageMetrics(
@@ -185,7 +186,7 @@ class UsageTracker:
 # FastAPI Dependency
 _tracker_instance: Optional[UsageTracker] = None
 
-def get_usage_tracker(publisher: EventPublisher) -> UsageTracker:
+def get_usage_tracker(publisher = Depends(get_event_publisher)):
     """Get or create singleton UsageTracker instance"""
     global _tracker_instance
     

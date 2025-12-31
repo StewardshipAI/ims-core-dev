@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -18,6 +18,8 @@ from src.gateway.schemas import ExecutionRequest as GatewayRequest, ExecutionRes
 from src.gateway.adapters.gemini import GeminiAdapter
 from src.gateway.adapters.openai import OpenAIAdapter
 from src.gateway.adapters.claude import ClaudeAdapter
+from src.core.policy_verifier import PolicyVerifierEngine
+from src.data.policy_registry import PolicyRegistry
 from src.api.auth_utils import verify_admin
 
 logger = logging.getLogger("ims.api.gateway")
@@ -28,14 +30,23 @@ router = APIRouter(prefix="/api/v1/execute", tags=["Gateway"])
 class ExecuteRequestDTO(BaseModel):
     prompt: str
     model_id: str
-    max_tokens: int = 1024
+    max_tokens: Optional[int] = 1024
     temperature: float = 0.7
-    system_instruction: str = "You are a helpful AI assistant."
+    system_instruction: Optional[str] = "You are a helpful AI assistant."
+    user_id: Optional[str] = None
+    bypass_policies: bool = False
+
+# Dependency for Policy Engine
+def get_policy_engine(publisher = Depends(get_event_publisher)):
+    db_conn = os.getenv("DB_CONNECTION_STRING")
+    policy_reg = PolicyRegistry(db_conn)
+    return PolicyVerifierEngine(policy_reg, publisher, model_registry=registry)
 
 # Dependency to get Action Gateway
 async def get_action_gateway(
     publisher = Depends(get_event_publisher),
-    usage_tracker = Depends(get_usage_tracker)
+    usage_tracker = Depends(get_usage_tracker),
+    policy_engine = Depends(get_policy_engine)
 ):
     
     # Initialize Adapters
@@ -71,7 +82,8 @@ async def get_action_gateway(
         state_machine=state_machine,
         error_recovery=error_recovery,
         usage_tracker=usage_tracker,
-        adapters=adapters
+        adapters=adapters,
+        policy_engine=policy_engine
     )
 
 @router.post(
@@ -88,6 +100,7 @@ async def execute_prompt(
     Execute a prompt using the Action Gateway.
     
     - Handles vendor selection
+    - Enforces policies (cost, vendor, behavioral)
     - Normalizes request/response
     - Tracks usage and cost
     - Recovers from errors automatically
@@ -99,7 +112,9 @@ async def execute_prompt(
             model_id=request.model_id,
             max_tokens=request.max_tokens,
             temperature=request.temperature,
-            system_instruction=request.system_instruction
+            system_instruction=request.system_instruction,
+            user_id=request.user_id,
+            bypass_policies=request.bypass_policies
         )
         
         response = await gateway.execute(gw_request)

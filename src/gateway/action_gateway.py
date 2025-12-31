@@ -5,6 +5,7 @@ from src.data.model_registry import ModelRegistry
 from src.core.state_machine import StateMachine, TransitionEvent, AgentState
 from src.core.error_recovery import ErrorRecovery
 from src.core.usage_tracker import UsageTracker
+from src.core.policy_verifier import PolicyVerifierEngine, EvaluationContext, PolicyAction
 from src.gateway.adapters.base import VendorAdapter
 from src.gateway.schemas import ExecutionRequest, ExecutionResponse
 from src.gateway.exceptions import GatewayError, ExecutionError
@@ -18,13 +19,15 @@ class ActionGateway:
         state_machine: StateMachine,
         error_recovery: ErrorRecovery,
         usage_tracker: UsageTracker,
-        adapters: Dict[str, VendorAdapter]
+        adapters: Dict[str, VendorAdapter],
+        policy_engine: Optional[PolicyVerifierEngine] = None
     ):
         self.registry = registry
         self.state_machine = state_machine
         self.error_recovery = error_recovery
         self.usage_tracker = usage_tracker
         self.adapters = adapters
+        self.policy_engine = policy_engine
 
     def _select_adapter(self, vendor_id: str) -> VendorAdapter:
         # Normalize vendor_id (case insensitive)
@@ -45,7 +48,7 @@ class ActionGateway:
     async def execute(self, request: ExecutionRequest) -> ExecutionResponse:
         """
         Execute request with automatic vendor selection,
-        error recovery, and usage tracking.
+        policy enforcement, error recovery, and usage tracking.
         """
         # 1. Get model details
         try:
@@ -53,36 +56,81 @@ class ActionGateway:
             if not model:
                 raise GatewayError(f"Model not found: {request.model_id}")
         except Exception as e:
-            # If not in registry, maybe we can still try if adapter supports it?
-            # But we need vendor_id for adapter selection. 
-            # We assume model_id convention or fail.
             raise GatewayError(f"Registry lookup failed for {request.model_id}: {e}")
 
-        # 2. Select adapter
+        # 2. Policy Enforcement (Pre-flight)
+        # SKIP if bypass_policies is True (User permission granted)
+        if self.policy_engine and not request.bypass_policies:
+            context = EvaluationContext(
+                model_id=request.model_id,
+                vendor_id=model.vendor_id,
+                estimated_tokens=request.max_tokens or 1000, 
+                prompt=request.prompt,
+                user_id=request.user_id,
+                correlation_id=request.correlation_id,
+                request_id=getattr(request, 'request_id', None),
+                system_instruction=request.system_instruction,
+                temperature=request.temperature,
+                max_output_tokens=request.max_tokens
+            )
+            
+            policy_result = await self.policy_engine.evaluate_pre_flight(context)
+            
+            if not policy_result.passed:
+                # Handle BLOCK (Highest priority)
+                if any(v.action == PolicyAction.BLOCK for v in policy_result.violations):
+                    reasons = [v.policy_name for v in policy_result.violations if v.action == PolicyAction.BLOCK]
+                    # We return a specific message allowing the user to know they can bypass
+                    raise GatewayError(
+                        f"Request blocked by policies: {', '.join(reasons)}. "
+                        "To proceed with this expensive option, set 'bypass_policies': true"
+                    )
+                
+                # Handle DEGRADE (Smart Rerouting)
+                degrade_violations = [v for v in policy_result.violations if v.action == PolicyAction.DEGRADE]
+                if degrade_violations:
+                    logger.info(f"Policy degradation (Smart Rerouting) triggered for {request.model_id}")
+                    
+                    # Search for cheaper alternative in SAME capability tier
+                    # (This maintains quality while reducing cost)
+                    try:
+                        alternatives = self.registry.filter_models(
+                            capability_tier=model.capability_tier,
+                            max_cost_in=float(model.cost_in_per_mil) # Find something cheaper or equal
+                        )
+                        
+                        # Sort by cost and exclude current model
+                        cheaper = [m for m in alternatives if m.model_id != request.model_id]
+                        cheaper.sort(key=lambda x: x.cost_in_per_mil + x.cost_out_per_mil)
+                        
+                        if cheaper:
+                            new_model = cheaper[0]
+                            logger.info(f"Smart Routing: Switching from {request.model_id} to cheaper alternative {new_model.model_id}")
+                            request.model_id = new_model.model_id
+                            model = new_model # Update model for adapter selection
+                        else:
+                            # No cheaper alternative in same tier? 
+                            # If it's a cost violation, we should probably warn/block unless bypassed
+                            logger.warning(f"No cheaper alternative found in {model.capability_tier.value}. Request may exceed budget.")
+                    except Exception as e:
+                        logger.error(f"Failed to find smart alternative: {e}")
+
+        # 3. Select adapter
         adapter = self._select_adapter(model.vendor_id)
         
-        # 3. Transition state
+        # 4. Transition state
         if self.state_machine.can_transition(TransitionEvent.EXECUTION_STARTED):
             self.state_machine.transition(
                 TransitionEvent.EXECUTION_STARTED,
                 {"model_id": request.model_id, "vendor_id": model.vendor_id}
             )
-        else:
-            logger.warning(f"Cannot transition to EXECUTION_STARTED from {self.state_machine.current_state}")
-            # For robustness, we might proceed anyway or reset state
         
-        # 4. Execute with error recovery
+        # 5. Execute with error recovery
         try:
-            # We wrap the adapter.execute call to match what ErrorRecovery expects.
-            # ErrorRecovery.execute_with_recovery expects a callable.
-            
             async def _execute_op(model_id_arg, req_arg):
-                # We need to re-select adapter if model_id changes (fallback)
                 current_model = self.registry.get_model(model_id_arg)
                 current_adapter = self._select_adapter(current_model.vendor_id)
                 
-                # Update request model_id
-                # (ExecutionRequest is a dataclass, we can modify or copy)
                 req_copy = ExecutionRequest(
                     prompt=req_arg.prompt,
                     model_id=model_id_arg,
@@ -102,27 +150,23 @@ class ActionGateway:
             response = await self.error_recovery.execute_with_recovery(
                 _execute_op,
                 request.model_id,
-                request # passed as context/arg
+                request
             )
             
-            # 5. Track usage
+            # 6. Track usage
             await self.usage_tracker.log_execution(
                 model_id=response.model_id,
-                vendor_id=model.vendor_id, # Use original vendor? Or response vendor? 
-                # Ideally response should contain vendor, or we re-lookup based on response.model_id
-                # But response object doesn't have vendor_id.
-                # We'll use the model object from registry for the *executed* model.
-                # ErrorRecovery returns the result of the successful execution.
+                vendor_id=model.vendor_id, 
                 tokens_in=response.tokens_input,
                 tokens_out=response.tokens_output,
-                cost_per_mil_in=model.cost_in_per_mil, # Potentially wrong if fallback happened
+                cost_per_mil_in=model.cost_in_per_mil,
                 cost_per_mil_out=model.cost_out_per_mil,
                 latency_ms=response.latency_ms,
                 success=True,
                 correlation_id=request.correlation_id
             )
             
-            # 6. Transition state
+            # 7. Transition state
             if self.state_machine.can_transition(TransitionEvent.EXECUTION_COMPLETED):
                 self.state_machine.transition(
                     TransitionEvent.EXECUTION_COMPLETED,
@@ -147,7 +191,6 @@ class ActionGateway:
             )
             
             # Transition to failed state
-            # EXECUTING -> ERROR -> ROLLBACK
             if self.state_machine.can_transition(TransitionEvent.ERROR):
                 self.state_machine.transition(
                     TransitionEvent.ERROR,
@@ -155,3 +198,4 @@ class ActionGateway:
                 )
             
             raise ExecutionError(f"Gateway execution failed: {e}")
+

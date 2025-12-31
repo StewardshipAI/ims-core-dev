@@ -20,6 +20,7 @@ class ExecutionRequest:
     # Metadata
     user_id: Optional[str] = None
     tags: Dict[str, str] = field(default_factory=dict)
+    bypass_policies: bool = False
 
 @dataclass
 class ExecutionResponse:

@@ -591,6 +591,9 @@ app.include_router(pcr_router)
 from src.api.gateway_router import router as gateway_router
 app.include_router(gateway_router)
 
+from src.api.compliance_router import router as compliance_router
+app.include_router(compliance_router)
+
 if __name__ == "__main__":
     import uvicorn
     

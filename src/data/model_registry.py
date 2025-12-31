@@ -4,6 +4,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
+from datetime import datetime
 import json
 import os
 
@@ -561,9 +562,8 @@ class ModelRegistry:
         else:
             health["cache"] = "not_configured"
         
-        # Get pool statistics (if available)
+        # Get pool statistics
         try:
-            # Note: psycopg2 pool doesn't expose stats, but we can track this
             health["pool_stats"] = {
                 "min_connections": self.db_pool.minconn,
                 "max_connections": self.db_pool.maxconn,
@@ -572,3 +572,260 @@ class ModelRegistry:
             logger.debug(f"Could not retrieve pool stats: {e}")
         
         return health
+
+    # --- Policy Engine Support ---
+
+    async def get_active_policies(self, evaluation_type: str = None) -> List[Any]:
+        """
+        Fetch all enabled policies, optionally filtered by evaluation type.
+        """
+        query = "SELECT * FROM policies WHERE enabled = TRUE"
+        params = []
+        
+        if evaluation_type:
+            query += " AND evaluation_type = %s"
+            params.append(evaluation_type)
+            
+        query += " ORDER BY priority DESC"
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, tuple(params))
+                    rows = cur.fetchall()
+                    
+                    # Return rows as Simple Namespace objects for compatibility with the Engine
+                    from types import SimpleNamespace
+                    return [SimpleNamespace(**row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error fetching active policies: {e}")
+            return []
+        finally:
+            self._return_connection(conn)
+
+    async def log_violation(self, violation: Any) -> None:
+        """
+        Persist a policy violation to the audit log.
+        """
+        query = """
+            INSERT INTO policy_violations (
+                policy_id, correlation_id, violation_type, severity, 
+                violation_details, action_taken
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        
+        params = (
+            violation.policy_id,
+            violation.correlation_id,
+            violation.details.get("violation", "unknown"),
+            violation.severity.value if hasattr(violation.severity, 'value') else str(violation.severity),
+            json.dumps(violation.details),
+            violation.action.value if hasattr(violation.action, 'value') else str(violation.action)
+        )
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    conn.commit()
+        except Exception as e:
+            logger.error(f"Error logging violation: {e}")
+        finally:
+            self._return_connection(conn)
+
+    async def get_violations(self, **filters) -> List[Dict[str, Any]]:
+        """Fetch violation history with filters."""
+        query = "SELECT v.*, p.name as policy_name FROM policy_violations v JOIN policies p ON v.policy_id = p.policy_id"
+        conditions = []
+        params = []
+        
+        if filters.get("policy_id"):
+            conditions.append("v.policy_id = %s")
+            params.append(filters["policy_id"])
+            
+        if filters.get("severity"):
+            conditions.append("v.severity = %s")
+            params.append(filters["severity"])
+            
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+            
+        query += " ORDER BY detected_at DESC LIMIT %s"
+        params.append(filters.get("limit", 100))
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, tuple(params))
+                    return cur.fetchall()
+        except Exception as e:
+            logger.error(f"Error fetching violations: {e}")
+            return []
+        finally:
+            self._return_connection(conn)
+
+    async def get_compliance_stats(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """
+        Get compliance statistics for reporting.
+        """
+        if not start_date:
+            from datetime import timedelta
+            start_date = datetime.utcnow() - timedelta(days=30)
+        if not end_date:
+            end_date = datetime.utcnow()
+        
+        # Query 1: Violation counts by severity
+        query_violations = """
+            SELECT 
+                severity,
+                COUNT(*) as count,
+                COUNT(*) FILTER (WHERE resolved = TRUE) as resolved_count
+            FROM policy_violations
+            WHERE detected_at BETWEEN %s AND %s
+            GROUP BY severity
+        """
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query_violations, (start_date, end_date))
+                    violations_by_severity = [dict(row) for row in cur.fetchall()]
+                    
+                    return {
+                        "period": {
+                            "start": start_date.isoformat(),
+                            "end": end_date.isoformat()
+                        },
+                        "violations_by_severity": violations_by_severity,
+                        "top_violated_policies": [],
+                        "daily_trends": []
+                    }
+        except Exception as e:
+            logger.error(f"Error fetching compliance stats: {e}")
+            return {"error": str(e)}
+        finally:
+            self._return_connection(conn)
+
+    async def resolve_violation(
+        self, 
+        violation_id: str, 
+        resolution_notes: str,
+        resolved_by: str = "system"
+    ) -> bool:
+        """Mark violation as resolved."""
+        query = "UPDATE policy_violations SET resolved = TRUE, resolved_at = CURRENT_TIMESTAMP, resolved_by = %s, resolution_notes = %s WHERE violation_id = %s"
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (resolved_by, resolution_notes, violation_id))
+                    return cur.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error resolving violation: {e}")
+            return False
+        finally:
+            self._return_connection(conn)
+
+
+    # --- Policy Engine Support ---
+
+    async def get_active_policies(self, evaluation_type: str = None) -> List[Any]:
+        """
+        Fetch all enabled policies, optionally filtered by evaluation type.
+        """
+        query = "SELECT * FROM policies WHERE enabled = TRUE"
+        params = []
+        
+        if evaluation_type:
+            query += " AND evaluation_type = %s"
+            params.append(evaluation_type)
+            
+        query += " ORDER BY priority DESC"
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, tuple(params))
+                    rows = cur.fetchall()
+                    
+                    # Return rows as Simple Namespace objects for compatibility with the Engine
+                    from types import SimpleNamespace
+                    return [SimpleNamespace(**row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error fetching active policies: {e}")
+            return []
+        finally:
+            self._return_connection(conn)
+
+    async def log_violation(self, violation: Any) -> None:
+        """
+        Persist a policy violation to the audit log.
+        """
+        query = """
+            INSERT INTO policy_violations (
+                policy_id, correlation_id, violation_type, severity, 
+                violation_details, action_taken
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        
+        params = (
+            violation.policy_id,
+            violation.correlation_id,
+            violation.details.get("violation", "unknown"),
+            violation.severity,
+            json.dumps(violation.details),
+            violation.action.value
+        )
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    conn.commit()
+        except Exception as e:
+            logger.error(f"Error logging violation: {e}")
+        finally:
+            self._return_connection(conn)
+
+    async def get_violations(self, **filters) -> List[Dict[str, Any]]:
+        """Fetch violation history with filters."""
+        query = "SELECT v.*, p.name as policy_name FROM policy_violations v JOIN policies p ON v.policy_id = p.policy_id"
+        conditions = []
+        params = []
+        
+        if filters.get("policy_id"):
+            conditions.append("v.policy_id = %s")
+            params.append(filters["policy_id"])
+            
+        if filters.get("severity"):
+            conditions.append("v.severity = %s")
+            params.append(filters["severity"])
+            
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+            
+        query += " ORDER BY detected_at DESC LIMIT %s"
+        params.append(filters.get("limit", 100))
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, tuple(params))
+                    return cur.fetchall()
+        except Exception as e:
+            logger.error(f"Error fetching violations: {e}")
+            return []
+        finally:
+            self._return_connection(conn)
+

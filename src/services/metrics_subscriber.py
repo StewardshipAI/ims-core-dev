@@ -53,6 +53,7 @@ class MetricsSubscriber:
         # Bindings
         await self.queue.bind("models.events", routing_key="model.*")
         await self.queue.bind("models.events", routing_key="filter.executed")
+        await self.queue.bind("metrics.events", routing_key="#") # Catch all metrics events
         
         # Set QoS
         await self.channel.set_qos(prefetch_count=10)
@@ -82,6 +83,10 @@ class MetricsSubscriber:
                     
                 elif event_type == "filter.executed":
                     await self._increment_metric("total_filter_queries")
+
+                elif event_type == "pcr.recommendation_generated":
+                    await self._increment_metric("total_model_queries") # Count recommendations as queries
+                    await self._increment_metric("total_pcr_recommendations")
 
                 elif event_type == "poison.pill":
                     raise ValueError("Poison pill received!")

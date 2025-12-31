@@ -169,6 +169,7 @@ class ErrorRecovery:
         execution_fn: Callable,
         model_id: str,
         *args,
+        fallback_chain: Optional[List[str]] = None,
         **kwargs
     ) -> Any:
         """
@@ -177,29 +178,35 @@ class ErrorRecovery:
         Args:
             execution_fn: Async function to execute
             model_id: Model being used
-            *args, **kwargs: Arguments to pass to execution_fn
-            
-        Returns:
-            Result from successful execution
-            
-        Raises:
-            Exception: If all recovery attempts fail
+            *args: Positional args for execution_fn
+            fallback_chain: Optional list of model IDs to try in order
+            **kwargs: Keyword args for execution_fn
         """
         attempt = 0
         current_model_id = model_id
         last_error = None
         
+        # Track models we've already tried to avoid loops
+        tried_models = {current_model_id}
+        
+        # Local copy of fallback chain
+        remaining_fallbacks = list(fallback_chain) if fallback_chain else []
+        
         while attempt < self.max_retries:
             try:
                 # Check circuit breaker
                 if self._is_circuit_open(current_model_id):
-                    logger.warning(f"Circuit open for {current_model_id}, trying fallback")
-                    fallback = await self.get_fallback_model(current_model_id)
+                    logger.warning(f"Circuit open for {current_model_id}, switching to fallback")
                     
-                    if not fallback:
-                        raise Exception("No fallback available and circuit is open")
+                    if remaining_fallbacks:
+                        current_model_id = remaining_fallbacks.pop(0)
+                    else:
+                        fallback = await self.get_fallback_model(current_model_id)
+                        if not fallback:
+                            raise Exception("No fallback available and circuit is open")
+                        current_model_id = fallback.model_id
                     
-                    current_model_id = fallback.model_id
+                    tried_models.add(current_model_id)
                 
                 # Attempt execution
                 result = await execution_fn(current_model_id, *args, **kwargs)
@@ -236,16 +243,20 @@ class ErrorRecovery:
                     raise
                 
                 elif strategy == RecoveryStrategy.FALLBACK_MODEL:
-                    fallback = await self.get_fallback_model(current_model_id)
-                    
-                    if not fallback:
-                        if attempt >= self.max_retries:
-                            raise
-                        # Try retry with backoff instead
-                        strategy = RecoveryStrategy.RETRY_BACKOFF
+                    if remaining_fallbacks:
+                        current_model_id = remaining_fallbacks.pop(0)
+                        logger.info(f"Using next model from fallback chain: {current_model_id}")
                     else:
-                        current_model_id = fallback.model_id
-                        continue  # Try with new model immediately
+                        fallback = await self.get_fallback_model(current_model_id)
+                        if not fallback:
+                            if attempt >= self.max_retries:
+                                raise
+                            strategy = RecoveryStrategy.RETRY_BACKOFF
+                        else:
+                            current_model_id = fallback.model_id
+                    
+                    tried_models.add(current_model_id)
+                    continue  # Try with new model immediately
                 
                 if strategy == RecoveryStrategy.RETRY_BACKOFF:
                     # Exponential backoff

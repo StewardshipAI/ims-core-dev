@@ -1,0 +1,7 @@
+policy: vendor_access
+version: 1
+rules:
+  - if: user.tier == "free"
+    allow:
+      vendors: [google]
+    deny_reason: "Paid tier required"

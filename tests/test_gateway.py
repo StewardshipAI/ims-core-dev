@@ -15,15 +15,25 @@ async def test_gateway_flow(mocker):
     """Test the full gateway flow with mocked adapter"""
     # Mock dependencies
     registry = MagicMock()
-    registry.get_model.return_value.vendor_id = "Google"
+    model = MagicMock()
+    model.model_id = "gemini-fake"
+    model.vendor_id = "Google"
+    model.capability_tier = "Tier_1"
+    model.cost_in_per_mil = 0.1
+    model.cost_out_per_mil = 0.2
+    model.regions = ["global"]
+    model.p_success = 0.99
+    
+    registry.get_model.return_value = model
+    registry.filter_models.return_value = [model]
     
     sm = MagicMock()
     sm.can_transition.return_value = True
     
     er = AsyncMock()
     # execute_with_recovery just calls the operation
-    async def side_effect(op, mid, ctx):
-        return await op(mid)
+    async def side_effect(op, mid, ctx, **kwargs):
+        return await op(mid, ctx)
     er.execute_with_recovery.side_effect = side_effect
     
     tracker = AsyncMock()

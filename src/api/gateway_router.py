@@ -19,6 +19,7 @@ from src.gateway.adapters.gemini import GeminiAdapter
 from src.gateway.adapters.openai import OpenAIAdapter
 from src.gateway.adapters.claude import ClaudeAdapter
 from src.core.policy_verifier import PolicyVerifierEngine
+from src.core.router import SmartRouter
 from src.data.policy_registry import PolicyRegistry
 from src.api.auth_utils import verify_admin
 
@@ -77,13 +78,17 @@ async def get_action_gateway(
     pcr_service = RecommendationService(registry)
     error_recovery = ErrorRecovery(registry, pcr_service)
     
+    # NEW: Smart Router
+    smart_router = SmartRouter(registry)
+    
     return ActionGateway(
         registry=registry,
         state_machine=state_machine,
         error_recovery=error_recovery,
         usage_tracker=usage_tracker,
         adapters=adapters,
-        policy_engine=policy_engine
+        policy_engine=policy_engine,
+        router=smart_router
     )
 
 @router.post(

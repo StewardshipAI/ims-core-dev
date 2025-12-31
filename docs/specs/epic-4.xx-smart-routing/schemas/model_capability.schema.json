@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "required": [
+    "model_id",
+    "reasoning",
+    "precision",
+    "max_context",
+    "tooling",
+    "cost_per_1k"
+  ],
+  "properties": {
+    "model_id": { "type": "string" },
+    "reasoning": { "type": "number" },
+    "precision": { "type": "number" },
+    "max_context": { "type": "integer" },
+    "tooling": { "type": "boolean" },
+    "cost_per_1k": { "type": "number" }
+  }
+}

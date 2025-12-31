@@ -6,6 +6,7 @@ from src.core.state_machine import StateMachine, TransitionEvent, AgentState
 from src.core.error_recovery import ErrorRecovery
 from src.core.usage_tracker import UsageTracker
 from src.core.policy_verifier import PolicyVerifierEngine, EvaluationContext, PolicyAction
+from src.core.router import SmartRouter, RoutingDecision
 from src.gateway.adapters.base import VendorAdapter
 from src.gateway.schemas import ExecutionRequest, ExecutionResponse
 from src.gateway.exceptions import GatewayError, ExecutionError
@@ -20,7 +21,8 @@ class ActionGateway:
         error_recovery: ErrorRecovery,
         usage_tracker: UsageTracker,
         adapters: Dict[str, VendorAdapter],
-        policy_engine: Optional[PolicyVerifierEngine] = None
+        policy_engine: Optional[PolicyVerifierEngine] = None,
+        router: Optional[SmartRouter] = None
     ):
         self.registry = registry
         self.state_machine = state_machine
@@ -28,6 +30,7 @@ class ActionGateway:
         self.usage_tracker = usage_tracker
         self.adapters = adapters
         self.policy_engine = policy_engine
+        self.router = router or SmartRouter(registry)
 
     def _select_adapter(self, vendor_id: str) -> VendorAdapter:
         # Normalize vendor_id (case insensitive)
@@ -47,8 +50,8 @@ class ActionGateway:
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResponse:
         """
-        Execute request with automatic vendor selection,
-        policy enforcement, error recovery, and usage tracking.
+        Execute request with smart routing, policy enforcement,
+        and automatic fallback.
         """
         # 1. Get model details
         try:
@@ -59,7 +62,6 @@ class ActionGateway:
             raise GatewayError(f"Registry lookup failed for {request.model_id}: {e}")
 
         # 2. Policy Enforcement (Pre-flight)
-        # SKIP if bypass_policies is True (User permission granted)
         if self.policy_engine and not request.bypass_policies:
             context = EvaluationContext(
                 model_id=request.model_id,
@@ -77,45 +79,27 @@ class ActionGateway:
             policy_result = await self.policy_engine.evaluate_pre_flight(context)
             
             if not policy_result.passed:
-                # Handle BLOCK (Highest priority)
+                # Handle BLOCK
                 if any(v.action == PolicyAction.BLOCK for v in policy_result.violations):
                     reasons = [v.policy_name for v in policy_result.violations if v.action == PolicyAction.BLOCK]
-                    # We return a specific message allowing the user to know they can bypass
                     raise GatewayError(
-                        f"Request blocked by policies: {', '.join(reasons)}. "
+                        f"Blocked by policies: {', '.join(reasons)}. "
                         "To proceed with this expensive option, set 'bypass_policies': true"
                     )
                 
                 # Handle DEGRADE (Smart Rerouting)
-                degrade_violations = [v for v in policy_result.violations if v.action == PolicyAction.DEGRADE]
-                if degrade_violations:
-                    logger.info(f"Policy degradation (Smart Rerouting) triggered for {request.model_id}")
-                    
-                    # Search for cheaper alternative in SAME capability tier
-                    # (This maintains quality while reducing cost)
-                    try:
-                        alternatives = self.registry.filter_models(
-                            capability_tier=model.capability_tier,
-                            max_cost_in=float(model.cost_in_per_mil) # Find something cheaper or equal
-                        )
-                        
-                        # Sort by cost and exclude current model
-                        cheaper = [m for m in alternatives if m.model_id != request.model_id]
-                        cheaper.sort(key=lambda x: x.cost_in_per_mil + x.cost_out_per_mil)
-                        
-                        if cheaper:
-                            new_model = cheaper[0]
-                            logger.info(f"Smart Routing: Switching from {request.model_id} to cheaper alternative {new_model.model_id}")
-                            request.model_id = new_model.model_id
-                            model = new_model # Update model for adapter selection
-                        else:
-                            # No cheaper alternative in same tier? 
-                            # If it's a cost violation, we should probably warn/block unless bypassed
-                            logger.warning(f"No cheaper alternative found in {model.capability_tier.value}. Request may exceed budget.")
-                    except Exception as e:
-                        logger.error(f"Failed to find smart alternative: {e}")
+                if any(v.action == PolicyAction.DEGRADE for v in policy_result.violations):
+                    logger.info("Policy DEGRADE triggered: Invoking SmartRouter")
+                    decision = self.router.select_model(
+                        capability_tier=model.capability_tier,
+                        strategy="cost"
+                    )
+                    if decision:
+                        logger.info(f"SmartRouter selected alternative: {decision.selected_model.model_id}")
+                        request.model_id = decision.selected_model.model_id
+                        model = decision.selected_model
 
-        # 3. Select adapter
+        # 3. Select Initial Adapter
         adapter = self._select_adapter(model.vendor_id)
         
         # 4. Transition state
@@ -125,7 +109,14 @@ class ActionGateway:
                 {"model_id": request.model_id, "vendor_id": model.vendor_id}
             )
         
-        # 5. Execute with error recovery
+        # 5. Build Smart Fallback Chain
+        decision = self.router.select_model(
+            capability_tier=model.capability_tier,
+            strategy="cost"
+        )
+        fallback_models = decision.fallback_chain if decision else []
+
+        # 6. Execute with Error Recovery
         try:
             async def _execute_op(model_id_arg, req_arg):
                 current_model = self.registry.get_model(model_id_arg)
@@ -142,7 +133,8 @@ class ActionGateway:
                     workflow_id=req_arg.workflow_id,
                     correlation_id=req_arg.correlation_id,
                     user_id=req_arg.user_id,
-                    tags=req_arg.tags
+                    tags=req_arg.tags,
+                    bypass_policies=req_arg.bypass_policies
                 )
                 
                 return await current_adapter.execute(req_copy)
@@ -150,10 +142,11 @@ class ActionGateway:
             response = await self.error_recovery.execute_with_recovery(
                 _execute_op,
                 request.model_id,
-                request
+                request,
+                fallback_chain=fallback_models
             )
             
-            # 6. Track usage
+            # 7. Track usage
             await self.usage_tracker.log_execution(
                 model_id=response.model_id,
                 vendor_id=model.vendor_id, 
@@ -166,7 +159,7 @@ class ActionGateway:
                 correlation_id=request.correlation_id
             )
             
-            # 7. Transition state
+            # 8. Transition state
             if self.state_machine.can_transition(TransitionEvent.EXECUTION_COMPLETED):
                 self.state_machine.transition(
                     TransitionEvent.EXECUTION_COMPLETED,
@@ -198,4 +191,3 @@ class ActionGateway:
                 )
             
             raise ExecutionError(f"Gateway execution failed: {e}")
-

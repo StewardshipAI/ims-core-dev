@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "required": [
+    "selected_model",
+    "ecsc",
+    "policy_trace_id",
+    "fallback_chain"
+  ],
+  "properties": {
+    "selected_model": { "type": "string" },
+    "ecsc": { "type": "number" },
+    "policy_trace_id": { "type": "string" },
+    "fallback_chain": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

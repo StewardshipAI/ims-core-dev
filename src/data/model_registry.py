@@ -2,7 +2,7 @@
 
 import logging
 from typing import List, Optional, Dict, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from enum import Enum
 from datetime import datetime
 import json
@@ -36,6 +36,10 @@ class ModelProfile:
     cost_out_per_mil: float
     function_call_support: bool = False
     is_active: bool = True
+    quota_rpm: int = 0
+    quota_tpm: int = 0
+    regions: List[str] = field(default_factory=lambda: ["global"])
+    p_success: float = 0.99
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert dataclass to dictionary with Enum handling."""

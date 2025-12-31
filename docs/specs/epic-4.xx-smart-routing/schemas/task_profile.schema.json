@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "required": [
+    "reasoning_depth",
+    "domain_specificity",
+    "output_precision",
+    "context_size",
+    "tool_use"
+  ],
+  "properties": {
+    "reasoning_depth": { "type": "number", "minimum": 0, "maximum": 1 },
+    "domain_specificity": { "type": "number", "minimum": 0, "maximum": 1 },
+    "output_precision": { "type": "number", "minimum": 0, "maximum": 1 },
+    "context_size": { "type": "number", "minimum": 0, "maximum": 1 },
+    "tool_use": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

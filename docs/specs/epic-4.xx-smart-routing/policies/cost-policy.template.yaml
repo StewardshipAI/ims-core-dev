@@ -1,0 +1,5 @@
+policy: cost_constraint
+version: 1
+rules:
+  - max_expected_cost_usd: 0.05
+    enforcement: hard

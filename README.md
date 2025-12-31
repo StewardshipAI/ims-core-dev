@@ -363,23 +363,46 @@ ALLOWED_ORIGINS=http://localhost:3000,https://your-domain.com
 
 ## 🗺️ Roadmap
 
-### ✅ Completed
-- [x] Epic 1: Model Registry & API (v0.1.0)
-- [x] Epic 2: Intelligence Layer (v0.2.0)
+| Milestone | Component | Status | Description |
+|-----------|-----------|--------|-------------|
+| **Epic 1** | Model Registry | ✅ Complete | Database, API, Caching |
+| **Epic 1** | Telemetry Bus | ✅ Complete | RabbitMQ, Event Publishers |
+| **Epic 1** | Metrics Store | ✅ Complete | Redis-backed usage stats |
+| **Epic 2** | PCR Engine | ✅ Complete | Recommendation logic |
+| **Epic 2** | ACF Core | ✅ Complete | State machine, Error recovery |
+| **Epic 2** | Integration | ✅ Complete | CLI wrappers, Health dashboard |
+| **Epic 3** | Action Gateway | ✅ Complete | Unified multi-vendor execution (Google, OpenAI, Anthropic) |
+| **Epic 4** | Policy Enforcement | 🔄 In Progress | Compliance, Guardrails, and Budget Limits |
 
-### 🚧 In Progress
-- [ ] Epic 3: Action Gateway (v0.3.0)
-  - [ ] Vendor adapter pattern
-  - [ ] Google Gemini adapter
-  - [ ] OpenAI GPT adapter
-  - [ ] Anthropic Claude adapter
-  - [ ] Unified execution interface
+---
 
-### 📋 Planned
-- [ ] Epic 4: Policy Enforcement (v0.4.0)
-- [ ] Epic 5: Advanced Analytics (v0.5.0)
-- [ ] Epic 6: Multi-Agent Workflows (v0.6.0)
-- [ ] Epic 7: Production Hardening (v1.0.0)
+## 🚧 In Progress: Epic 4: Policy Enforcement Engine
+
+### Overview
+Implement policy verification and enforcement across the IMS platform to ensure compliance with business rules and constraints.
+
+### Components
+- **Policy Verifier Engine (PVE)**: Core evaluation engine.
+- **Behavioral Constraint Processor (BCP)**: Real-time guardrail enforcement.
+- **Audit Logging**: Complete history of policy decisions.
+- **Compliance Reporting**: Generation of compliance summaries.
+
+### Policy Types
+- **Cost Constraints**: Budget limits and threshold alerts.
+- **Performance Requirements**: Latency and accuracy minimums.
+- **Vendor Restrictions**: Approved/Blocked vendor lists.
+- **Data Residency**: Regional routing requirements.
+- **Behavioral Guardrails**: Content safety and formatting rules.
+
+### Tasks
+- [ ] Implement policy evaluator
+- [ ] Build constraint checker
+- [ ] Add audit logging
+- [ ] Create compliance reports
+- [ ] Integration with Agent Control Flow (ACF)
+- [ ] Write comprehensive tests
+
+---
 
 ---
 

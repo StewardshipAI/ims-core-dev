@@ -49,16 +49,16 @@ IMS handles the complexity of model selection, usage tracking, and error recover
 
 ```mermaid
 graph TD
-    Client[Client App / CLI] -->|1. Request Recommendation| API[IMS Core API]
-    API -->|2. Query| Registry[Model Registry DB]
-    API -->|3. Optimize| PCR[Recommendation Engine]
+    Client["Client App / CLI"] -->|1. Request Recommendation| API["IMS Core API"]
+    API -->|2. Query| Registry["Model Registry DB"]
+    API -->|3. Optimize| PCR["Recommendation Engine"]
     
-    Client -->|4. Execute| Provider[AI Provider (Gemini/OpenAI)]
+    Client -->|4. Execute| Provider["AI Provider (Gemini/OpenAI)"]
     
     Client -.->|5. Log Usage| API
-    API -->|6. Publish Event| Bus[Telemetry Bus (RabbitMQ)]
-    Bus -->|7. Process| Subscriber[Metrics Service]
-    Subscriber -->|8. Store| Redis[Metrics Cache]
+    API -->|6. Publish Event| Bus["Telemetry Bus (RabbitMQ)"]
+    Bus -->|7. Process| Subscriber["Metrics Service"]
+    Subscriber -->|8. Store| Redis["Metrics Cache"]
 ```
 
 ---

@@ -4,8 +4,10 @@ import logging
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from src.data.model_registry import ModelRegistry, ModelProfile, CapabilityTier
+from src.observability.logging import get_logger
+from src.observability.tracing import trace_operation, add_span_attributes
 
-logger = logging.getLogger("ims.router")
+logger = get_logger("ims.router")
 
 @dataclass
 class RoutingDecision:
@@ -23,6 +25,7 @@ class SmartRouter:
     def __init__(self, registry: ModelRegistry):
         self.registry = registry
 
+    @trace_operation("router_select_model", {"component": "router"})
     def select_model(
         self, 
         capability_tier: CapabilityTier,
@@ -33,6 +36,11 @@ class SmartRouter:
         """
         Select the optimal model and build a fallback chain.
         """
+        add_span_attributes({
+            "tier": capability_tier.value,
+            "strategy": strategy,
+            "region": region
+        })
         # 1. Fetch candidates from same tier
         candidates = self.registry.filter_models(
             capability_tier=capability_tier,

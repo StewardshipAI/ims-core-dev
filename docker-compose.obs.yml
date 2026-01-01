@@ -1,0 +1,170 @@
+# IMS Observability Stack - Docker Compose
+# 
+# Deploys full observability infrastructure:
+# - Prometheus (metrics collection)
+# - Grafana (visualization)
+# - Jaeger (distributed tracing)
+# - Loki (log aggregation)
+# - Alertmanager (alert routing)
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.observability.yml up
+
+version: '3.9'
+
+services:
+  
+  # === Prometheus (Metrics Database) ===
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: ims-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./config/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - ims-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  # === Grafana (Visualization) ===
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: ims-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - ./config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./config/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - ims-network
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  # === Jaeger (Distributed Tracing) ===
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: ims-jaeger
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "5775:5775/udp"   # Accept zipkin.thrift over compact thrift protocol
+      - "6831:6831/udp"   # Accept jaeger.thrift over compact thrift protocol
+      - "6832:6832/udp"   # Accept jaeger.thrift over binary thrift protocol
+      - "5778:5778"       # Serve configs
+      - "16686:16686"     # Serve frontend (UI)
+      - "14268:14268"     # Accept jaeger.thrift directly from clients
+      - "14250:14250"     # Accept model.proto
+      - "9411:9411"       # Zipkin compatible endpoint
+      - "4317:4317"       # OTLP gRPC
+      - "4318:4318"       # OTLP HTTP
+    networks:
+      - ims-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:14269/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  # === Loki (Log Aggregation) ===
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: ims-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./config/loki/loki-config.yml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - ims-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  # === Promtail (Log Shipper for Loki) ===
+  promtail:
+    image: grafana/promtail:2.9.2
+    container_name: ims-promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./config/promtail/promtail-config.yml:/etc/promtail/config.yml
+      - /var/log:/var/log:ro
+      - ./logs:/ims-logs:ro
+    networks:
+      - ims-network
+    depends_on:
+      - loki
+    restart: unless-stopped
+  
+  # === Alertmanager (Alert Routing) ===
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: ims-alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - ims-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  loki_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+
+networks:
+  ims-network:
+    external: true
+    name: ims-core-dev_ims-network
+
+
+# Quick Start Guide

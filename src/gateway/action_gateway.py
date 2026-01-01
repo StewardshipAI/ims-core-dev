@@ -10,8 +10,13 @@ from src.core.router import SmartRouter, RoutingDecision
 from src.gateway.adapters.base import VendorAdapter
 from src.gateway.schemas import ExecutionRequest, ExecutionResponse
 from src.gateway.exceptions import GatewayError, ExecutionError
+import time
+from src.observability.logging import get_logger, log_api_call
+from src.observability.metrics import get_metrics
+from src.observability.tracing import trace_operation, add_span_attributes, add_span_event
 
-logger = logging.getLogger("ims.gateway.action_gateway")
+logger = get_logger("ims.gateway.action_gateway")
+metrics = get_metrics()
 
 class ActionGateway:
     def __init__(
@@ -48,11 +53,13 @@ class ActionGateway:
                 
         raise GatewayError(f"No adapter found for vendor: {vendor_id}")
 
+    @trace_operation("gateway_execute", {"component": "action_gateway"})
     async def execute(self, request: ExecutionRequest) -> ExecutionResponse:
         """
         Execute request with smart routing, policy enforcement,
         and automatic fallback.
         """
+        start_time = time.time()
         # 1. Get model details
         try:
             model = self.registry.get_model(request.model_id)
@@ -61,7 +68,7 @@ class ActionGateway:
         except Exception as e:
             raise GatewayError(f"Registry lookup failed for {request.model_id}: {e}")
 
-        # 2. Policy Enforcement (Pre-flight)
+        # 2. Policy Enforcement
         if self.policy_engine and not request.bypass_policies:
             context = EvaluationContext(
                 model_id=request.model_id,
@@ -75,20 +82,21 @@ class ActionGateway:
                 temperature=request.temperature,
                 max_output_tokens=request.max_tokens
             )
-            
             policy_result = await self.policy_engine.evaluate_pre_flight(context)
+            add_span_attributes({"policy_passed": policy_result.passed})
             
             if not policy_result.passed:
                 # Handle BLOCK
                 if any(v.action == PolicyAction.BLOCK for v in policy_result.violations):
                     reasons = [v.policy_name for v in policy_result.violations if v.action == PolicyAction.BLOCK]
+                    metrics.record_error("policy_blocked", "action_gateway")
                     raise GatewayError(
                         f"Blocked by policies: {', '.join(reasons)}. "
                         "To proceed with this expensive option, set 'bypass_policies': true"
                     )
                 
-                # Handle DEGRADE (Smart Rerouting)
                 if any(v.action == PolicyAction.DEGRADE for v in policy_result.violations):
+                    add_span_event("policy_degrade_triggered")
                     logger.info("Policy DEGRADE triggered: Invoking SmartRouter")
                     decision = self.router.select_model(
                         capability_tier=model.capability_tier,
@@ -146,6 +154,7 @@ class ActionGateway:
                 fallback_chain=fallback_models
             )
             
+            duration = time.time() - start_time
             # 7. Track usage
             await self.usage_tracker.log_execution(
                 model_id=response.model_id,
@@ -159,6 +168,38 @@ class ActionGateway:
                 correlation_id=request.correlation_id
             )
             
+            # Record Metrics
+            metrics.record_request(
+                service="action_gateway",
+                vendor=model.vendor_id,
+                model=response.model_id,
+                duration_seconds=duration,
+                success=True
+            )
+            metrics.record_tokens(
+                vendor=model.vendor_id,
+                model=response.model_id,
+                input_tokens=response.tokens_input,
+                output_tokens=response.tokens_output
+            )
+            
+            # Trace attributes
+            add_span_attributes({
+                "model_id": response.model_id,
+                "vendor_id": model.vendor_id,
+                "tokens_total": response.tokens_input + response.tokens_output
+            })
+            
+            # Log structured
+            log_api_call(
+                logger,
+                vendor=model.vendor_id,
+                model=response.model_id,
+                latency_ms=duration * 1000,
+                tokens=response.tokens_input + response.tokens_output,
+                success=True
+            )
+            
             # 8. Transition state
             if self.state_machine.can_transition(TransitionEvent.EXECUTION_COMPLETED):
                 self.state_machine.transition(
@@ -169,6 +210,7 @@ class ActionGateway:
             return response
             
         except Exception as e:
+            duration = time.time() - start_time
             # Track failure
             await self.usage_tracker.log_execution(
                 model_id=request.model_id,
@@ -182,6 +224,15 @@ class ActionGateway:
                 error=str(e),
                 correlation_id=request.correlation_id
             )
+            
+            metrics.record_request(
+                service="action_gateway",
+                vendor=model.vendor_id if 'model' in locals() else "unknown",
+                model=request.model_id,
+                duration_seconds=duration,
+                success=False
+            )
+            metrics.record_error(type(e).__name__, "action_gateway")
             
             # Transition to failed state
             if self.state_machine.can_transition(TransitionEvent.ERROR):

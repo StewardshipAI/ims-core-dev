@@ -9,12 +9,18 @@ import aio_pika
 import redis.asyncio as redis  # Using async redis
 from aio_pika.abc import AbstractIncomingMessage
 
+from src.observability.logging import setup_logging, get_logger
+from src.observability.metrics import get_metrics
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+setup_logging(
+    level="INFO",
+    format_type="human", # Use json in production
+    service_name="metrics-subscriber",
+    environment="development"
 )
-logger = logging.getLogger("metrics-subscriber")
+logger = get_logger("metrics-subscriber")
+metrics_svc = get_metrics()
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -68,13 +74,18 @@ class MetricsSubscriber:
                 body = json.loads(message.body)
                 event_type = body.get("type", "unknown")
                 
-                logger.info(f"Received Event: {event_type} | ID: {body.get('id')}")
+                logger.info(f"Received Event: {event_type}", extra={"event_id": body.get('id')})
                 
                 # Processing Logic
                 if event_type == "model.registered":
                     await self._increment_metric("total_models_registered")
                     vendor = body.get("data", {}).get("vendor_id", "unknown")
                     await self._increment_metric(f"vendor_models:{vendor}")
+                    metrics_svc.record_model_update(
+                        vendor=body.get("data", {}).get("vendor_id", "unknown"),
+                        model=body.get("data", {}).get("model_id", "unknown"),
+                        action="registered"
+                    )
                     
                 elif event_type == "model.queried":
                     await self._increment_metric("total_model_queries")
@@ -90,6 +101,13 @@ class MetricsSubscriber:
 
                 elif event_type == "poison.pill":
                     raise ValueError("Poison pill received!")
+
+                elif event_type == "policy.violation.detected":
+                    metrics_svc.record_policy_violation(
+                        policy=body.get("data", {}).get("policy_name", "unknown"),
+                        category=body.get("data", {}).get("category", "unknown"),
+                        severity=body.get("data", {}).get("severity", "unknown")
+                    )
                 
             except Exception as e:
                 logger.error(f"Error processing message: {e}")

@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from src.gateway.adapters.gemini import GeminiAdapter
 from src.gateway.schemas import ExecutionRequest
+from src.data.model_registry import CapabilityTier
 
 @pytest.mark.asyncio
 async def test_gemini_adapter_structure():
@@ -18,7 +19,7 @@ async def test_gateway_flow(mocker):
     model = MagicMock()
     model.model_id = "gemini-fake"
     model.vendor_id = "Google"
-    model.capability_tier = "Tier_1"
+    model.capability_tier = CapabilityTier.TIER_1
     model.cost_in_per_mil = 0.1
     model.cost_out_per_mil = 0.2
     model.regions = ["global"]

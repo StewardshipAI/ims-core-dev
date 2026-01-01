@@ -2,6 +2,15 @@ import pytest
 import os
 import psycopg2
 from src.data.model_registry import ModelRegistry, ModelProfile, CapabilityTier
+from src.observability.tracing import initialize_tracing
+
+def pytest_configure(config):
+    """Initialize tracing for the test session."""
+    initialize_tracing(
+        service_name="ims-tests",
+        environment="testing",
+        jaeger_endpoint="localhost:6831" # Won't actually send in tests usually but needs init
+    )
 
 # Use a separate test database or connection string for safety
 TEST_DB_CONN = os.getenv("TEST_DB_CONNECTION_STRING", "postgresql://user:pass@localhost:5432/ims_test_db")

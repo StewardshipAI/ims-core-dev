@@ -1,0 +1,11 @@
+groups:
+- name: ims_alerts
+  rules:
+  - alert: HighErrorRate
+    expr: sum(rate(ims_errors_total[5m])) / sum(rate(ims_requests_total[5m])) > 0.05
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High error rate on IMS API"
+      description: "Error rate is above 5% for the last 5 minutes."

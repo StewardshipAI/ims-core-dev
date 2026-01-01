@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 import json
+from src.observability.tracing import trace_operation, add_span_attributes
 
 logger = logging.getLogger("ims.pve")
 
@@ -157,6 +158,7 @@ class PolicyVerifierEngine:
         
         logger.info("PolicyVerifierEngine initialized (No Censorship Mode)")
     
+    @trace_operation("policy_evaluate_pre_flight", {"component": "pve"})
     async def evaluate_pre_flight(
         self, 
         context: EvaluationContext
@@ -165,6 +167,10 @@ class PolicyVerifierEngine:
         Evaluate policies BEFORE executing a request.
         """
         start_time = datetime.utcnow()
+        add_span_attributes({
+            "model_id": context.model_id,
+            "vendor_id": context.vendor_id
+        })
         
         try:
             # Fetch active pre-flight policies
@@ -245,10 +251,6 @@ class PolicyVerifierEngine:
         
         if self.model_registry:
             try:
-                # model_registry methods are sync in this project's implementation usually, 
-                # but let's check. Actually model_registry.get_model is sync.
-                # Wait, I updated it to be async in one of my previous turns? No, let's check.
-                # Based on src/data/model_registry.py it's sync.
                 model = self.model_registry.get_model(context.model_id)
                 if not model:
                     warnings.append({"message": f"Model {context.model_id} not found"})

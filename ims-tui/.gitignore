@@ -1,0 +1,34 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+Cargo.lock  # Keep for applications, ignore for libraries
+
+# Test artifacts
+*.profraw
+*.profdata
+
+# Documentation builds
+/docs/_build/

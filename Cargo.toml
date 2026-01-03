@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "ims-tui"
+]
+resolver = "2"
